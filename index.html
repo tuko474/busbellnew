@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Bus Bell — Умные напоминания для транспорта</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23FF6B35'/><text x='50' y='68' font-size='45' font-weight='bold' text-anchor='middle' fill='%231a1a2e'>BB</text></svg>">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #fff;
+            overflow-x: hidden;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes ring {
+            0%, 100% { transform: rotate(-5deg); }
+            50% { transform: rotate(5deg); }
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        @keyframes busMove {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(3px); }
+        }
+        @keyframes trainMove {
+            0%, 100% { transform: translateX(0); }
+            50% { transform: translateX(2px); }
+        }
+        @keyframes wheelSpin {
+            to { transform: rotate(360deg); }
+        }
+        @keyframes sparkle {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        @keyframes metroDoors {
+            0%, 100% { transform: scaleX(1); }
+            50% { transform: scaleX(0.85); }
+        }
+        
+        .bus-animate { animation: busMove 0.5s ease-in-out infinite; }
+        .metro-animate { animation: trainMove 0.4s ease-in-out infinite; }
+        .train-animate { animation: busMove 0.4s ease-in-out infinite; }
+        .wheel-spin { transform-origin: center; animation: wheelSpin 0.5s linear infinite; }
+        .headlight { animation: sparkle 0.5s ease-in-out infinite; }
+        .metro-door { animation: metroDoors 2s ease-in-out infinite; }
+        
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255,255,255,0.2);
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #FF6B35;
+            cursor: pointer;
+            border: 3px solid #fff;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #FF6B35;
+            cursor: pointer;
+            border: 3px solid #fff;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        const BusBellApp = () => {
+            const [activeTab, setActiveTab] = useState('bus');
+            const [currentLocation, setCurrentLocation] = useState(null);
+            const [selectedPoint, setSelectedPoint] = useState(null);
+            const [reminders, setReminders] = useState([]);
+            const [showCreateModal, setShowCreateModal] = useState(false);
+            const [showEditModal, setShowEditModal] = useState(false);
+            const [editingReminder, setEditingReminder] = useState(null);
+            const [reminderName, setReminderName] = useState('');
+            const [reminderRadius, setReminderRadius] = useState(200);
+            const [city, setCity] = useState('Определение...');
+            const [showCityPicker, setShowCityPicker] = useState(false);
+            const [isTracking, setIsTracking] = useState(false);
+            const [triggeredReminder, setTriggeredReminder] = useState(null);
+            const [mapLoaded, setMapLoaded] = useState(false);
+            const [isSelectingOnMap, setIsSelectingOnMap] = useState(false);
+            
+            const audioRef = useRef(null);
+            const watchIdRef = useRef(null);
+            const mapRef = useRef(null);
+            const ymapRef = useRef(null);
+            const currentPlacemarkRef = useRef(null);
+            const selectedPlacemarkRef = useRef(null);
+            const reminderPlacemarksRef = useRef({});
+
+            const cities = [
+                { name: 'Москва', lat: 55.7558, lon: 37.6173 },
+                { name: 'Санкт-Петербург', lat: 59.9343, lon: 30.3351 },
+                { name: 'Новосибирск', lat: 55.0084, lon: 82.9357 },
+                { name: 'Екатеринбург', lat: 56.8389, lon: 60.6057 },
+                { name: 'Казань', lat: 55.7887, lon: 49.1221 },
+                { name: 'Нижний Новгород', lat: 56.2965, lon: 43.9361 },
+                { name: 'Челябинск', lat: 55.1644, lon: 61.4368 },
+                { name: 'Самара', lat: 53.1959, lon: 50.1002 },
+                { name: 'Омск', lat: 54.9885, lon: 73.3242 },
+                { name: 'Ростов-на-Дону', lat: 47.2357, lon: 39.7015 },
+                { name: 'Уфа', lat: 54.7388, lon: 55.9721 },
+                { name: 'Красноярск', lat: 56.0153, lon: 92.8932 },
+                { name: 'Воронеж', lat: 51.6720, lon: 39.1843 },
+                { name: 'Пермь', lat: 58.0105, lon: 56.2502 },
+                { name: 'Волгоград', lat: 48.7080, lon: 44.5133 },
+                { name: 'Краснодар', lat: 45.0355, lon: 38.9753 },
+                { name: 'Сочи', lat: 43.5855, lon: 39.7231 },
+                { name: 'Владивосток', lat: 43.1332, lon: 131.9113 },
+                { name: 'Иркутск', lat: 52.2978, lon: 104.2964 },
+                { name: 'Калининград', lat: 54.7104, lon: 20.4522 },
+            ];
+
+            // Анимированная иконка автобуса
+            const AnimatedBusIcon = ({ active }) => (
+                <svg width="36" height="36" viewBox="0 0 48 48" style={{ overflow: 'visible' }}>
+                    <g className={active ? 'bus-animate' : ''}>
+                        <circle cx="14" cy="38" r="4" fill={active ? '#FF6B35' : '#666'} className={active ? 'wheel-spin' : ''} />
+                        <circle cx="34" cy="38" r="4" fill={active ? '#FF6B35' : '#666'} className={active ? 'wheel-spin' : ''} />
+                        <circle cx="14" cy="38" r="1.5" fill="#333" />
+                        <circle cx="34" cy="38" r="1.5" fill="#333" />
+                        <rect x="6" y="12" width="36" height="24" rx="4" fill={active ? '#FF6B35' : '#555'} />
+                        <rect x="8" y="14" width="32" height="10" rx="2" fill={active ? '#FFE4D6' : '#444'} />
+                        <rect x="10" y="16" width="8" height="6" rx="1" fill={active ? '#87CEEB' : '#333'} />
+                        <rect x="20" y="16" width="8" height="6" rx="1" fill={active ? '#87CEEB' : '#333'} />
+                        <rect x="30" y="16" width="8" height="6" rx="1" fill={active ? '#87CEEB' : '#333'} />
+                        <rect x="12" y="26" width="6" height="8" rx="1" fill={active ? '#D35400' : '#444'} />
+                        <circle cx="16" cy="30" r="0.8" fill={active ? '#FFD700' : '#555'} />
+                        <rect x="6" y="28" width="2" height="3" rx="0.5" fill={active ? '#FFD700' : '#444'} />
+                        <rect x="40" y="28" width="2" height="3" rx="0.5" fill={active ? '#FF4444' : '#444'} />
+                        <rect x="30" y="27" width="10" height="6" rx="1" fill={active ? '#222' : '#333'} />
+                        <text x="35" y="32" textAnchor="middle" fill={active ? '#FF6B35' : '#555'} fontSize="5" fontWeight="bold">A1</text>
+                    </g>
+                </svg>
+            );
+
+            // Анимированная иконка метро
+            const AnimatedMetroIcon = ({ active }) => (
+                <svg width="36" height="36" viewBox="0 0 48 48" style={{ overflow: 'visible' }}>
+                    <g className={active ? 'metro-animate' : ''}>
+                        {/* Рельсы/тоннель */}
+                        <ellipse cx="24" cy="42" rx="20" ry="4" fill={active ? '#333' : '#222'} />
+                        
+                        {/* Колёса */}
+                        <rect x="10" y="36" width="6" height="3" rx="1" fill={active ? '#444' : '#333'} />
+                        <rect x="32" y="36" width="6" height="3" rx="1" fill={active ? '#444' : '#333'} />
+                        
+                        {/* Кузов вагона */}
+                        <rect x="6" y="12" width="36" height="24" rx="6" fill={active ? '#E63946' : '#555'} />
+                        
+                        {/* Красная полоса сверху */}
+                        <rect x="6" y="12" width="36" height="6" rx="3" fill={active ? '#C1121F' : '#444'} />
+                        
+                        {/* Окна */}
+                        <rect x="10" y="20" width="8" height="10" rx="2" fill={active ? '#1a1a2e' : '#333'} />
+                        <rect x="20" y="20" width="8" height="10" rx="2" fill={active ? '#1a1a2e' : '#333'} />
+                        <rect x="30" y="20" width="8" height="10" rx="2" fill={active ? '#1a1a2e' : '#333'} />
+                        
+                        {/* Свет в окнах */}
+                        <rect x="11" y="21" width="6" height="8" rx="1" fill={active ? '#FFE5B4' : '#444'} opacity="0.7" />
+                        <rect x="21" y="21" width="6" height="8" rx="1" fill={active ? '#FFE5B4' : '#444'} opacity="0.7" />
+                        <rect x="31" y="21" width="6" height="8" rx="1" fill={active ? '#FFE5B4' : '#444'} opacity="0.7" />
+                        
+                        {/* Двери */}
+                        <rect x="14" y="20" width="1" height="10" fill={active ? '#333' : '#222'} className={active ? 'metro-door' : ''} />
+                        <rect x="25" y="20" width="1" height="10" fill={active ? '#333' : '#222'} className={active ? 'metro-door' : ''} />
+                        
+                        {/* Фары */}
+                        <circle cx="9" cy="32" r="2" fill={active ? '#FFD700' : '#444'} className={active ? 'headlight' : ''} />
+                        <circle cx="39" cy="32" r="2" fill={active ? '#FF4444' : '#444'} />
+                        
+                        {/* Буква М */}
+                        <circle cx="24" cy="8" r="6" fill={active ? '#E63946' : '#444'} />
+                        <text x="24" y="11" textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold">М</text>
+                    </g>
+                </svg>
+            );
+
+            // Анимированная иконка электрички
+            const AnimatedTrainIcon = ({ active }) => (
+                <svg width="36" height="36" viewBox="0 0 48 48" style={{ overflow: 'visible' }}>
+                    <g className={active ? 'train-animate' : ''}>
+                        <rect x="0" y="40" width="48" height="2" fill={active ? '#8B4513' : '#444'} />
+                        <rect x="4" y="42" width="4" height="4" fill={active ? '#666' : '#333'} />
+                        <rect x="20" y="42" width="4" height="4" fill={active ? '#666' : '#333'} />
+                        <rect x="36" y="42" width="4" height="4" fill={active ? '#666' : '#333'} />
+                        <circle cx="12" cy="38" r="4" fill={active ? '#333' : '#555'} className={active ? 'wheel-spin' : ''} />
+                        <circle cx="36" cy="38" r="4" fill={active ? '#333' : '#555'} className={active ? 'wheel-spin' : ''} />
+                        <circle cx="12" cy="38" r="2" fill={active ? '#457B9D' : '#444'} />
+                        <circle cx="36" cy="38" r="2" fill={active ? '#457B9D' : '#444'} />
+                        <rect x="4" y="14" width="40" height="22" rx="3" fill={active ? '#457B9D' : '#555'} />
+                        <path d="M4 20 L0 28 L4 36 Z" fill={active ? '#3D6A85' : '#444'} />
+                        <rect x="8" y="18" width="10" height="8" rx="2" fill={active ? '#E8F4F8' : '#444'} />
+                        <rect x="20" y="18" width="8" height="8" rx="2" fill={active ? '#87CEEB' : '#333'} />
+                        <rect x="30" y="18" width="8" height="8" rx="2" fill={active ? '#87CEEB' : '#333'} />
+                        <rect x="4" y="28" width="40" height="3" fill={active ? '#A8DADC' : '#444'} />
+                        <circle cx="2" cy="24" r="2" fill={active ? '#FFD700' : '#444'} className={active ? 'headlight' : ''} />
+                        <rect x="8" y="32" width="12" height="4" rx="1" fill={active ? '#fff' : '#444'} />
+                        <text x="14" y="35" textAnchor="middle" fill={active ? '#457B9D' : '#333'} fontSize="3" fontWeight="bold">ЭКСПРЕСС</text>
+                    </g>
+                </svg>
+            );
+
+            const tabConfig = {
+                bus: { label: 'Автобус', color: '#FF6B35', icon: AnimatedBusIcon },
+                metro: { label: 'Метро', color: '#E63946', icon: AnimatedMetroIcon },
+                railway: { label: 'Электричка', color: '#457B9D', icon: AnimatedTrainIcon }
+            };
+
+            const getCityName = useCallback((lat, lon) => {
+                let closestCity = cities[0];
+                let minDistance = Infinity;
+                cities.forEach(c => {
+                    const distance = Math.sqrt(Math.pow(lat - c.lat, 2) + Math.pow(lon - c.lon, 2));
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        closestCity = c;
+                    }
+                });
+                return minDistance < 1 ? closestCity.name : 'Россия';
+            }, []);
+
+            const calculateDistance = (lat1, lon1, lat2, lon2) => {
+                const R = 6371e3;
+                const φ1 = lat1 * Math.PI / 180;
+                const φ2 = lat2 * Math.PI / 180;
+                const Δφ = (lat2 - lat1) * Math.PI / 180;
+                const Δλ = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                          Math.cos(φ1) * Math.cos(φ2) *
+                          Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+                const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+                return R * c;
+            };
+
+            const playAlarm = useCallback(() => {
+                if (audioRef.current) {
+                    audioRef.current.currentTime = 0;
+                    audioRef.current.play().catch(e => console.log('Audio play failed:', e));
+                }
+            }, []);
+
+            const checkReminders = useCallback((position) => {
+                reminders.forEach(reminder => {
+                    if (!reminder.triggered) {
+                        const distance = calculateDistance(
+                            position.lat, position.lon,
+                            reminder.point.lat, reminder.point.lon
+                        );
+                        if (distance <= reminder.radius) {
+                            playAlarm();
+                            setTriggeredReminder(reminder);
+                            setReminders(prev => prev.map(r => 
+                                r.id === reminder.id ? { ...r, triggered: true } : r
+                            ));
+                        }
+                    }
+                });
+            }, [reminders, playAlarm]);
+
+            // Загрузка Яндекс.Карт
+            useEffect(() => {
+                const script = document.createElement('script');
+                script.src = 'https://api-maps.yandex.ru/2.1/?apikey=43bcf47b-c9da-4b7e-8336-ac41095908e6&lang=ru_RU';
+                script.async = true;
+                script.onload = () => {
+                    window.ymaps.ready(() => setMapLoaded(true));
+                };
+                document.head.appendChild(script);
+                return () => {
+                    if (script.parentNode) script.parentNode.removeChild(script);
+                };
+            }, []);
+
+            // Инициализация карты
+            useEffect(() => {
+                if (!mapLoaded || !mapRef.current || ymapRef.current) return;
+
+                const initMap = (center) => {
+                    ymapRef.current = new window.ymaps.Map(mapRef.current, {
+                        center: [center.lat, center.lon],
+                        zoom: 15,
+                        controls: ['zoomControl', 'geolocationControl']
+                    }, { suppressMapOpenBlock: true });
+
+                    ymapRef.current.events.add('click', (e) => {
+                        const coords = e.get('coords');
+                        const point = { lat: coords[0], lon: coords[1] };
+                        setSelectedPoint(point);
+
+                        if (selectedPlacemarkRef.current) {
+                            selectedPlacemarkRef.current.geometry.setCoordinates(coords);
+                        } else {
+                            selectedPlacemarkRef.current = new window.ymaps.Placemark(coords, {
+                                hintContent: 'Выбранная точка'
+                            }, {
+                                preset: 'islands#redCircleDotIcon',
+                                draggable: true
+                            });
+                            selectedPlacemarkRef.current.events.add('dragend', () => {
+                                const newCoords = selectedPlacemarkRef.current.geometry.getCoordinates();
+                                setSelectedPoint({ lat: newCoords[0], lon: newCoords[1] });
+                            });
+                            ymapRef.current.geoObjects.add(selectedPlacemarkRef.current);
+                        }
+                    });
+                };
+
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            const loc = { lat: position.coords.latitude, lon: position.coords.longitude };
+                            setCurrentLocation(loc);
+                            setCity(getCityName(loc.lat, loc.lon));
+                            initMap(loc);
+                            currentPlacemarkRef.current = new window.ymaps.Placemark(
+                                [loc.lat, loc.lon],
+                                { hintContent: 'Вы здесь' },
+                                { preset: 'islands#greenCircleDotIcon' }
+                            );
+                            ymapRef.current.geoObjects.add(currentPlacemarkRef.current);
+                        },
+                        () => {
+                            const defaultLoc = { lat: 55.7558, lon: 37.6173 };
+                            setCurrentLocation(defaultLoc);
+                            setCity('Москва');
+                            initMap(defaultLoc);
+                        },
+                        { enableHighAccuracy: true }
+                    );
+                } else {
+                    const defaultLoc = { lat: 55.7558, lon: 37.6173 };
+                    setCurrentLocation(defaultLoc);
+                    setCity('Москва');
+                    initMap(defaultLoc);
+                }
+            }, [mapLoaded, getCityName]);
+
+            // Отслеживание геопозиции
+            useEffect(() => {
+                if (isTracking && navigator.geolocation) {
+                    watchIdRef.current = navigator.geolocation.watchPosition(
+                        (position) => {
+                            const loc = { lat: position.coords.latitude, lon: position.coords.longitude };
+                            setCurrentLocation(loc);
+                            checkReminders(loc);
+                            if (currentPlacemarkRef.current && ymapRef.current) {
+                                currentPlacemarkRef.current.geometry.setCoordinates([loc.lat, loc.lon]);
+                            }
+                        },
+                        (error) => console.log('Watch error:', error),
+                        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+                    );
+                }
+                return () => {
+                    if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+                };
+            }, [isTracking, checkReminders]);
+
+            useEffect(() => {
+                const activeReminders = reminders.filter(r => !r.triggered);
+                if (activeReminders.length > 0 && !isTracking) setIsTracking(true);
+                else if (activeReminders.length === 0 && isTracking) setIsTracking(false);
+            }, [reminders, isTracking]);
+
+            const selectCity = (selectedCity) => {
+                setCity(selectedCity.name);
+                setCurrentLocation({ lat: selectedCity.lat, lon: selectedCity.lon });
+                setShowCityPicker(false);
+                if (ymapRef.current) {
+                    ymapRef.current.setCenter([selectedCity.lat, selectedCity.lon], 14);
+                    if (currentPlacemarkRef.current) {
+                        currentPlacemarkRef.current.geometry.setCoordinates([selectedCity.lat, selectedCity.lon]);
+                    }
+                }
+            };
+
+            const getPlacemarkColor = (type) => {
+                if (type === 'bus') return 'orange';
+                if (type === 'metro') return 'red';
+                return 'blue';
+            };
+
+            const createReminder = () => {
+                if (!selectedPoint || !reminderName) return;
+                const newReminder = {
+                    id: Date.now(),
+                    name: reminderName,
+                    point: selectedPoint,
+                    radius: reminderRadius,
+                    type: activeTab,
+                    triggered: false,
+                    createdAt: new Date().toISOString()
+                };
+                setReminders(prev => [...prev, newReminder]);
+                setShowCreateModal(false);
+                setReminderName('');
+                setReminderRadius(200);
+
+                if (ymapRef.current) {
+                    const placemark = new window.ymaps.Placemark(
+                        [selectedPoint.lat, selectedPoint.lon],
+                        { hintContent: reminderName, balloonContent: `${reminderName}<br>Радиус: ${reminderRadius}м` },
+                        { preset: `islands#${getPlacemarkColor(activeTab)}DotIcon` }
+                    );
+                    ymapRef.current.geoObjects.add(placemark);
+                    reminderPlacemarksRef.current[newReminder.id] = placemark;
+                }
+
+                if (selectedPlacemarkRef.current) {
+                    ymapRef.current.geoObjects.remove(selectedPlacemarkRef.current);
+                    selectedPlacemarkRef.current = null;
+                }
+                setSelectedPoint(null);
+            };
+
+            const openEditModal = (reminder) => {
+                setEditingReminder(reminder);
+                setReminderName(reminder.name);
+                setReminderRadius(reminder.radius);
+                setActiveTab(reminder.type);
+                setShowEditModal(true);
+            };
+
+            const saveReminder = () => {
+                if (!editingReminder || !reminderName) return;
+                setReminders(prev => prev.map(r => 
+                    r.id === editingReminder.id 
+                        ? { ...r, name: reminderName, radius: reminderRadius, type: activeTab }
+                        : r
+                ));
+                setShowEditModal(false);
+                setEditingReminder(null);
+                setReminderName('');
+                setReminderRadius(200);
+            };
+
+            const changeReminderPoint = () => {
+                setShowEditModal(false);
+                setIsSelectingOnMap(true);
+            };
+
+            useEffect(() => {
+                if (isSelectingOnMap && selectedPoint && editingReminder) {
+                    setReminders(prev => prev.map(r => 
+                        r.id === editingReminder.id ? { ...r, point: selectedPoint } : r
+                    ));
+                    
+                    // Обновляем метку на карте
+                    if (reminderPlacemarksRef.current[editingReminder.id] && ymapRef.current) {
+                        reminderPlacemarksRef.current[editingReminder.id].geometry.setCoordinates([selectedPoint.lat, selectedPoint.lon]);
+                    }
+                    
+                    setIsSelectingOnMap(false);
+                    setSelectedPoint(null);
+                    setEditingReminder(null);
+                    
+                    if (selectedPlacemarkRef.current && ymapRef.current) {
+                        ymapRef.current.geoObjects.remove(selectedPlacemarkRef.current);
+                        selectedPlacemarkRef.current = null;
+                    }
+                }
+            }, [selectedPoint, isSelectingOnMap, editingReminder]);
+
+            const deleteReminder = (id) => {
+                // Удаляем метку с карты
+                if (reminderPlacemarksRef.current[id] && ymapRef.current) {
+                    ymapRef.current.geoObjects.remove(reminderPlacemarksRef.current[id]);
+                    delete reminderPlacemarksRef.current[id];
+                }
+                setReminders(prev => prev.filter(r => r.id !== id));
+            };
+
+            return (
+                <div style={{
+                    minHeight: '100vh',
+                    background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+                    position: 'relative',
+                    overflow: 'hidden'
+                }}>
+                    {/* Фоновые декорации */}
+                    <div style={{
+                        position: 'absolute',
+                        top: '-100px',
+                        right: '-100px',
+                        width: '300px',
+                        height: '300px',
+                        borderRadius: '50%',
+                        background: 'radial-gradient(circle, rgba(255,107,53,0.15) 0%, transparent 70%)',
+                        pointerEvents: 'none'
+                    }} />
+                    <div style={{
+                        position: 'absolute',
+                        bottom: '-150px',
+                        left: '-100px',
+                        width: '400px',
+                        height: '400px',
+                        borderRadius: '50%',
+                        background: 'radial-gradient(circle, rgba(69,123,157,0.15) 0%, transparent 70%)',
+                        pointerEvents: 'none'
+                    }} />
+
+                    {/* Аудио для оповещения */}
+                    <audio ref={audioRef} preload="auto">
+                        <source src="data:audio/wav;base64,UklGRl9vT19teleVYhBJCt3tuqck8rAonL4+O/joRbLxl9ueXwyp+HXDURe7Xi89OxnINfKRSA0/jxvKKLYy8chOD++8iukGEuEYXZ//nLs5RfJxGD1fj5ya2OXCsVgdr8+cqwkV0rE4HV+PjHq41cLBeE3f/6y7KTYCwShNb5+MirkF0rFoTb/vrKsJJfLBSB1fj4x6qNXC0Xhd7/+8uyk2EtEoPW+fjIq49dLBaD2/75ya+RXy0Ug9f5+MiqjlwtF4Xe//vLspNhLRKD1vn4yKuPXSwWg9v++cmvkV8tFIPX+fjIqo5cLReF3v/7y7KTYSwSg9b5+Mirj10sFoPb/vnJr5FfLRSD1/n4yKqOXC0Xhd7/+8uyk2EsEoPW+fjIq49dLBaD2/75ya+RXy0Ug9f5+MiqjlwtF4Xe//vLspNh" type="audio/wav" />
+                    </audio>
+
+                    {/* Хедер */}
+                    <header style={{
+                        padding: '16px 20px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        borderBottom: '1px solid rgba(255,255,255,0.1)'
+                    }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{
+                                width: '52px',
+                                height: '52px',
+                                borderRadius: '14px',
+                                background: 'linear-gradient(135deg, #FF6B35 0%, #F7C59F 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontWeight: '800',
+                                fontSize: '20px',
+                                color: '#1a1a2e',
+                                boxShadow: '0 4px 15px rgba(255,107,53,0.4)',
+                                position: 'relative'
+                            }}>
+                                BB
+                                <div style={{
+                                    position: 'absolute',
+                                    top: '-5px',
+                                    right: '-5px',
+                                    width: '18px',
+                                    height: '18px',
+                                    borderRadius: '50%',
+                                    background: '#fff',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center'
+                                }}>
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="#FF6B35">
+                                        <path d="M12 2C13.1 2 14 2.9 14 4C14 4.3 13.9 4.6 13.8 4.8C16.8 5.6 19 8.3 19 11.5V17L21 19V20H3V19L5 17V11.5C5 8.3 7.2 5.6 10.2 4.8C10.1 4.6 10 4.3 10 4C10 2.9 10.9 2 12 2ZM12 22C10.9 22 10 21.1 10 20H14C14 21.1 13.1 22 12 22Z"/>
+                                    </svg>
+                                </div>
+                            </div>
+                            <div>
+                                <h1 style={{ fontSize: '24px', fontWeight: '700', margin: 0 }}>Bus Bell</h1>
+                                <p style={{ fontSize: '12px', margin: 0, opacity: 0.7 }}>Умные напоминания</p>
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={() => setShowCityPicker(true)}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                background: 'rgba(255,255,255,0.1)',
+                                padding: '10px 16px',
+                                borderRadius: '20px',
+                                backdropFilter: 'blur(10px)',
+                                border: 'none',
+                                color: '#fff',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF6B35" strokeWidth="2">
+                                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                                <circle cx="12" cy="9" r="2.5"/>
+                            </svg>
+                            <span style={{ fontSize: '14px', fontWeight: '500' }}>{city}</span>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ opacity: 0.6 }}>
+                                <path d="M6 9l6 6 6-6"/>
+                            </svg>
+                        </button>
+                    </header>
+
+                    {/* Вкладки транспорта */}
+                    <div style={{
+                        display: 'flex',
+                        gap: '12px',
+                        padding: '20px',
+                        justifyContent: 'center'
+                    }}>
+                        {Object.entries(tabConfig).map(([key, config]) => {
+                            const IconComponent = config.icon;
+                            const isActive = activeTab === key;
+                            return (
+                                <button
+                                    key={key}
+                                    onClick={() => setActiveTab(key)}
+                                    style={{
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        gap: '10px',
+                                        padding: '18px 28px',
+                                        borderRadius: '18px',
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.3s ease',
+                                        background: isActive 
+                                            ? `linear-gradient(135deg, ${config.color} 0%, ${config.color}99 100%)`
+                                            : 'rgba(255,255,255,0.08)',
+                                        color: '#fff',
+                                        fontWeight: isActive ? '600' : '500',
+                                        fontSize: '14px',
+                                        boxShadow: isActive ? `0 6px 20px ${config.color}50` : 'none',
+                                        transform: isActive ? 'scale(1.05)' : 'scale(1)',
+                                        minWidth: '110px'
+                                    }}
+                                >
+                                    <IconComponent active={isActive} />
+                                    {config.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+
+                    {/* Подсказка при редактировании */}
+                    {isSelectingOnMap && (
+                        <div style={{
+                            background: 'rgba(255,107,53,0.9)',
+                            padding: '12px 20px',
+                            textAlign: 'center',
+                            fontSize: '14px',
+                            fontWeight: '500'
+                        }}>
+                            🎯 Нажмите на карту, чтобы выбрать новую точку
+                        </div>
+                    )}
+
+                    {/* Карта Яндекс */}
+                    <div style={{ padding: '0 20px' }}>
+                        <div
+                            ref={mapRef}
+                            style={{
+                                height: '320px',
+                                borderRadius: '20px',
+                                overflow: 'hidden',
+                                border: '1px solid rgba(255,255,255,0.1)',
+                                background: '#2a2a4a'
+                            }}
+                        >
+                            {!mapLoaded && (
+                                <div style={{
+                                    height: '100%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    flexDirection: 'column',
+                                    gap: '12px'
+                                }}>
+                                    <div style={{
+                                        width: '40px',
+                                        height: '40px',
+                                        border: '3px solid rgba(255,255,255,0.2)',
+                                        borderTop: '3px solid #FF6B35',
+                                        borderRadius: '50%',
+                                        animation: 'spin 1s linear infinite'
+                                    }} />
+                                    <span style={{ opacity: 0.7, fontSize: '14px' }}>Загрузка карты...</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Кнопка создания */}
+                    {selectedPoint && !isSelectingOnMap && (
+                        <div style={{ padding: '16px 20px', animation: 'slideUp 0.3s ease' }}>
+                            <button
+                                onClick={() => setShowCreateModal(true)}
+                                style={{
+                                    width: '100%',
+                                    padding: '16px',
+                                    borderRadius: '16px',
+                                    border: 'none',
+                                    background: `linear-gradient(135deg, ${tabConfig[activeTab].color} 0%, ${tabConfig[activeTab].color}cc 100%)`,
+                                    color: '#fff',
+                                    fontSize: '16px',
+                                    fontWeight: '600',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '10px',
+                                    boxShadow: `0 8px 25px ${tabConfig[activeTab].color}50`
+                                }}
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 2C13.1 2 14 2.9 14 4C14 4.3 13.9 4.6 13.8 4.8C16.8 5.6 19 8.3 19 11.5V17L21 19V20H3V19L5 17V11.5C5 8.3 7.2 5.6 10.2 4.8C10.1 4.6 10 4.3 10 4C10 2.9 10.9 2 12 2ZM12 22C10.9 22 10 21.1 10 20H14C14 21.1 13.1 22 12 22Z"/>
+                                </svg>
+                                Создать напоминание
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Список напоминаний */}
+                    <div style={{ padding: '8px 20px 120px' }}>
+                        <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px', opacity: 0.9 }}>
+                            Активные напоминания ({reminders.filter(r => !r.triggered).length})
+                        </h3>
+
+                        {reminders.filter(r => !r.triggered).length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '40px 20px', opacity: 0.5 }}>
+                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: '12px' }}>
+                                    <path d="M12 2C13.1 2 14 2.9 14 4C14 4.3 13.9 4.6 13.8 4.8C16.8 5.6 19 8.3 19 11.5V17L21 19V20H3V19L5 17V11.5C5 8.3 7.2 5.6 10.2 4.8C10.1 4.6 10 4.3 10 4C10 2.9 10.9 2 12 2Z"/>
+                                </svg>
+                                <p style={{ fontSize: '14px' }}>Нет активных напоминаний</p>
+                                <p style={{ fontSize: '12px', marginTop: '4px' }}>Нажмите на карту, чтобы выбрать точку</p>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                {reminders.filter(r => !r.triggered).map(reminder => {
+                                    const IconComponent = tabConfig[reminder.type].icon;
+                                    return (
+                                        <div
+                                            key={reminder.id}
+                                            style={{
+                                                background: 'rgba(255,255,255,0.08)',
+                                                borderRadius: '16px',
+                                                padding: '16px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '14px',
+                                                backdropFilter: 'blur(10px)',
+                                                border: '1px solid rgba(255,255,255,0.1)'
+                                            }}
+                                        >
+                                            <div style={{
+                                                width: '54px',
+                                                height: '54px',
+                                                borderRadius: '14px',
+                                                background: `${tabConfig[reminder.type].color}30`,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center'
+                                            }}>
+                                                <IconComponent active={true} />
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <p style={{ fontWeight: '600', fontSize: '15px', margin: 0 }}>{reminder.name}</p>
+                                                <p style={{ fontSize: '12px', opacity: 0.6, margin: '4px 0 0' }}>
+                                                    {tabConfig[reminder.type].label} • Радиус: {reminder.radius}м
+                                                </p>
+                                            </div>
+                                            
+                                            <button
+                                                onClick={() => openEditModal(reminder)}
+                                                style={{
+                                                    width: '38px',
+                                                    height: '38px',
+                                                    borderRadius: '10px',
+                                                    border: 'none',
+                                                    background: 'rgba(255,255,255,0.1)',
+                                                    color: '#fff',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}
+                                            >
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                                                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                                </svg>
+                                            </button>
+                                            
+                                            <button
+                                                onClick={() => deleteReminder(reminder.id)}
+                                                style={{
+                                                    width: '38px',
+                                                    height: '38px',
+                                                    borderRadius: '10px',
+                                                    border: 'none',
+                                                    background: 'rgba(239,83,80,0.2)',
+                                                    color: '#EF5350',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}
+                                            >
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                    <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14z"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Индикатор отслеживания */}
+                    {isTracking && (
+                        <div style={{
+                            position: 'fixed',
+                            bottom: '24px',
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            background: 'rgba(76,175,80,0.95)',
+                            padding: '12px 24px',
+                            borderRadius: '25px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            fontSize: '14px',
+                            fontWeight: '500',
+                            boxShadow: '0 4px 20px rgba(76,175,80,0.4)',
+                            backdropFilter: 'blur(10px)',
+                            zIndex: 100
+                        }}>
+                            <div style={{
+                                width: '10px',
+                                height: '10px',
+                                borderRadius: '50%',
+                                background: '#fff',
+                                animation: 'blink 1s infinite'
+                            }} />
+                            GPS отслеживание активно
+                        </div>
+                    )}
+
+                    {/* Модальное окно выбора города */}
+                    {showCityPicker && (
+                        <div style={{
+                            position: 'fixed',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.7)',
+                            display: 'flex',
+                            alignItems: 'flex-end',
+                            justifyContent: 'center',
+                            zIndex: 200,
+                            backdropFilter: 'blur(5px)'
+                        }}>
+                            <div style={{
+                                background: 'linear-gradient(180deg, #2a2a4a 0%, #1a1a3a 100%)',
+                                borderRadius: '24px 24px 0 0',
+                                padding: '24px',
+                                width: '100%',
+                                maxWidth: '500px',
+                                maxHeight: '70vh',
+                                animation: 'slideUp 0.3s ease'
+                            }}>
+                                <div style={{
+                                    width: '40px',
+                                    height: '4px',
+                                    borderRadius: '2px',
+                                    background: 'rgba(255,255,255,0.3)',
+                                    margin: '0 auto 20px'
+                                }} />
+
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                                    <h3 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Выберите город</h3>
+                                    <button
+                                        onClick={() => setShowCityPicker(false)}
+                                        style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: '8px' }}
+                                    >
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M18 6L6 18M6 6l12 12"/>
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                <div style={{ overflowY: 'auto', maxHeight: 'calc(70vh - 100px)' }}>
+                                    {cities.map(c => (
+                                        <button
+                                            key={c.name}
+                                            onClick={() => selectCity(c)}
+                                            style={{
+                                                width: '100%',
+                                                padding: '14px 16px',
+                                                background: city === c.name ? 'rgba(255,107,53,0.2)' : 'transparent',
+                                                border: 'none',
+                                                borderBottom: '1px solid rgba(255,255,255,0.1)',
+                                                color: '#fff',
+                                                fontSize: '15px',
+                                                textAlign: 'left',
+                                                cursor: 'pointer',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between'
+                                            }}
+                                        >
+                                            <span>{c.name}</span>
+                                            {city === c.name && (
+                                                <svg width="20" height="20" viewBox="0 0 24 24" fill="#FF6B35">
+                                                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                                                </svg>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Модальное окно создания напоминания */}
+                    {showCreateModal && (
+                        <div style={{
+                            position: 'fixed',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.7)',
+                            display: 'flex',
+                            alignItems: 'flex-end',
+                            justifyContent: 'center',
+                            zIndex: 200,
+                            backdropFilter: 'blur(5px)'
+                        }}>
+                            <div style={{
+                                background: 'linear-gradient(180deg, #2a2a4a 0%, #1a1a3a 100%)',
+                                borderRadius: '24px 24px 0 0',
+                                padding: '24px',
+                                width: '100%',
+                                maxWidth: '500px',
+                                animation: 'slideUp 0.3s ease'
+                            }}>
+                                <div style={{
+                                    width: '40px',
+                                    height: '4px',
+                                    borderRadius: '2px',
+                                    background: 'rgba(255,255,255,0.3)',
+                                    margin: '0 auto 20px'
+                                }} />
+
+                                <h3 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '20px', textAlign: 'center' }}>
+                                    Новое напоминание
+                                </h3>
+
+                                <div style={{ marginBottom: '20px' }}>
+                                    <label style={{ display: 'block', fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>Название</label>
+                                    <input
+                                        type="text"
+                                        value={reminderName}
+                                        onChange={(e) => setReminderName(e.target.value)}
+                                        placeholder="Например: Моя остановка"
+                                        style={{
+                                            width: '100%',
+                                            padding: '14px 16px',
+                                            borderRadius: '12px',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            background: 'rgba(255,255,255,0.08)',
+                                            color: '#fff',
+                                            fontSize: '15px',
+                                            outline: 'none',
+                                            boxSizing: 'border-box'
+                                        }}
+                                    />
+                                </div>
+
+                                <div style={{ marginBottom: '24px' }}>
+                                    <label style={{ display: 'block', fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>
+                                        Радиус срабатывания: {reminderRadius}м
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="50"
+                                        max="500"
+                                        step="50"
+                                        value={reminderRadius}
+                                        onChange={(e) => setReminderRadius(Number(e.target.value))}
+                                    />
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', opacity: 0.5, marginTop: '6px' }}>
+                                        <span>50м</span>
+                                        <span>500м</span>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button
+                                        onClick={() => {
+                                            setShowCreateModal(false);
+                                            if (selectedPlacemarkRef.current && ymapRef.current) {
+                                                ymapRef.current.geoObjects.remove(selectedPlacemarkRef.current);
+                                                selectedPlacemarkRef.current = null;
+                                            }
+                                            setSelectedPoint(null);
+                                        }}
+                                        style={{
+                                            flex: 1,
+                                            padding: '14px',
+                                            borderRadius: '12px',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            background: 'transparent',
+                                            color: '#fff',
+                                            fontSize: '15px',
+                                            fontWeight: '500',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Отмена
+                                    </button>
+                                    <button
+                                        onClick={createReminder}
+                                        disabled={!reminderName}
+                                        style={{
+                                            flex: 1,
+                                            padding: '14px',
+                                            borderRadius: '12px',
+                                            border: 'none',
+                                            background: reminderName 
+                                                ? `linear-gradient(135deg, ${tabConfig[activeTab].color} 0%, ${tabConfig[activeTab].color}cc 100%)`
+                                                : 'rgba(255,255,255,0.1)',
+                                            color: '#fff',
+                                            fontSize: '15px',
+                                            fontWeight: '600',
+                                            cursor: reminderName ? 'pointer' : 'not-allowed',
+                                            opacity: reminderName ? 1 : 0.5
+                                        }}
+                                    >
+                                        Создать
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Модальное окно редактирования */}
+                    {showEditModal && editingReminder && (
+                        <div style={{
+                            position: 'fixed',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.7)',
+                            display: 'flex',
+                            alignItems: 'flex-end',
+                            justifyContent: 'center',
+                            zIndex: 200,
+                            backdropFilter: 'blur(5px)'
+                        }}>
+                            <div style={{
+                                background: 'linear-gradient(180deg, #2a2a4a 0%, #1a1a3a 100%)',
+                                borderRadius: '24px 24px 0 0',
+                                padding: '24px',
+                                width: '100%',
+                                maxWidth: '500px',
+                                animation: 'slideUp 0.3s ease'
+                            }}>
+                                <div style={{
+                                    width: '40px',
+                                    height: '4px',
+                                    borderRadius: '2px',
+                                    background: 'rgba(255,255,255,0.3)',
+                                    margin: '0 auto 20px'
+                                }} />
+
+                                <h3 style={{ fontSize: '20px', fontWeight: '700', marginBottom: '20px', textAlign: 'center' }}>
+                                    Редактировать
+                                </h3>
+
+                                <div style={{ marginBottom: '20px' }}>
+                                    <label style={{ display: 'block', fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>Название</label>
+                                    <input
+                                        type="text"
+                                        value={reminderName}
+                                        onChange={(e) => setReminderName(e.target.value)}
+                                        style={{
+                                            width: '100%',
+                                            padding: '14px 16px',
+                                            borderRadius: '12px',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            background: 'rgba(255,255,255,0.08)',
+                                            color: '#fff',
+                                            fontSize: '15px',
+                                            outline: 'none',
+                                            boxSizing: 'border-box'
+                                        }}
+                                    />
+                                </div>
+
+                                <div style={{ marginBottom: '20px' }}>
+                                    <label style={{ display: 'block', fontSize: '13px', opacity: 0.7, marginBottom: '8px' }}>
+                                        Радиус: {reminderRadius}м
+                                    </label>
+                                    <input
+                                        type="range"
+                                        min="50"
+                                        max="500"
+                                        step="50"
+                                        value={reminderRadius}
+                                        onChange={(e) => setReminderRadius(Number(e.target.value))}
+                                    />
+                                </div>
+
+                                <button
+                                    onClick={changeReminderPoint}
+                                    style={{
+                                        width: '100%',
+                                        padding: '14px',
+                                        marginBottom: '20px',
+                                        borderRadius: '12px',
+                                        border: '1px dashed rgba(255,255,255,0.3)',
+                                        background: 'transparent',
+                                        color: '#fff',
+                                        fontSize: '14px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '8px'
+                                    }}
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                                        <circle cx="12" cy="9" r="2.5"/>
+                                    </svg>
+                                    Изменить точку на карте
+                                </button>
+
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button
+                                        onClick={() => {
+                                            setShowEditModal(false);
+                                            setEditingReminder(null);
+                                            setReminderName('');
+                                            setReminderRadius(200);
+                                        }}
+                                        style={{
+                                            flex: 1,
+                                            padding: '14px',
+                                            borderRadius: '12px',
+                                            border: '1px solid rgba(255,255,255,0.2)',
+                                            background: 'transparent',
+                                            color: '#fff',
+                                            fontSize: '15px',
+                                            fontWeight: '500',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        Отмена
+                                    </button>
+                                    <button
+                                        onClick={saveReminder}
+                                        disabled={!reminderName}
+                                        style={{
+                                            flex: 1,
+                                            padding: '14px',
+                                            borderRadius: '12px',
+                                            border: 'none',
+                                            background: reminderName 
+                                                ? `linear-gradient(135deg, ${tabConfig[activeTab].color} 0%, ${tabConfig[activeTab].color}cc 100%)`
+                                                : 'rgba(255,255,255,0.1)',
+                                            color: '#fff',
+                                            fontSize: '15px',
+                                            fontWeight: '600',
+                                            cursor: reminderName ? 'pointer' : 'not-allowed',
+                                            opacity: reminderName ? 1 : 0.5
+                                        }}
+                                    >
+                                        Сохранить
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Модальное окно сработавшего напоминания */}
+                    {triggeredReminder && (
+                        <div style={{
+                            position: 'fixed',
+                            inset: 0,
+                            background: 'rgba(0,0,0,0.85)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            zIndex: 300,
+                            backdropFilter: 'blur(10px)'
+                        }}>
+                            <div style={{
+                                background: 'linear-gradient(180deg, #2a2a4a 0%, #1a1a3a 100%)',
+                                borderRadius: '24px',
+                                padding: '32px',
+                                width: '90%',
+                                maxWidth: '360px',
+                                textAlign: 'center',
+                                animation: 'pulse 0.5s ease',
+                                boxShadow: `0 0 60px ${tabConfig[triggeredReminder.type].color}50`
+                            }}>
+                                <div style={{
+                                    width: '80px',
+                                    height: '80px',
+                                    borderRadius: '50%',
+                                    background: `linear-gradient(135deg, ${tabConfig[triggeredReminder.type].color} 0%, ${tabConfig[triggeredReminder.type].color}80 100%)`,
+                                    margin: '0 auto 20px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    animation: 'ring 0.5s ease infinite'
+                                }}>
+                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="#fff">
+                                        <path d="M12 2C13.1 2 14 2.9 14 4C14 4.3 13.9 4.6 13.8 4.8C16.8 5.6 19 8.3 19 11.5V17L21 19V20H3V19L5 17V11.5C5 8.3 7.2 5.6 10.2 4.8C10.1 4.6 10 4.3 10 4C10 2.9 10.9 2 12 2ZM12 22C10.9 22 10 21.1 10 20H14C14 21.1 13.1 22 12 22Z"/>
+                                    </svg>
+                                </div>
+
+                                <h2 style={{ fontSize: '22px', fontWeight: '700', marginBottom: '8px' }}>🎉 Вы на месте!</h2>
+                                <p style={{ fontSize: '18px', opacity: 0.9, marginBottom: '24px' }}>{triggeredReminder.name}</p>
+
+                                <button
+                                    onClick={() => setTriggeredReminder(null)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '16px',
+                                        borderRadius: '14px',
+                                        border: 'none',
+                                        background: `linear-gradient(135deg, ${tabConfig[triggeredReminder.type].color} 0%, ${tabConfig[triggeredReminder.type].color}cc 100%)`,
+                                        color: '#fff',
+                                        fontSize: '16px',
+                                        fontWeight: '600',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Понятно
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<BusBellApp />);
+    </script>
+</body>
+</html>
