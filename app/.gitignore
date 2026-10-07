@@ -9,8 +9,8 @@ web-build/
 # Открытый тестовый ключ для сборок в GitHub (не для Google Play)
 !tools/android/busbell-test.keystore
 # Android-проект генерируется при сборке (expo prebuild)
-android/
-ios/
+/android/
+/ios/
 .env
 .env.local
 npm-debug.*
