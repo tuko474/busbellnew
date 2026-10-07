@@ -9,8 +9,8 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Haptics from 'expo-haptics';
 import { useAppStore, SOUND_OPTIONS, THEMES } from '../store/appStore';
+import { previewAlarm, vibrateOnce } from '../services/soundService';
 
 export default function SettingsScreen() {
   const { 
@@ -48,13 +48,12 @@ export default function SettingsScreen() {
   };
 
   const testVibration = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    vibrateOnce();
   };
 
+  // Настоящий будильник (звук по умолчанию + вибрация) на 3 секунды
   const testAlarm = () => {
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-    setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning), 500);
-    setTimeout(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning), 1000);
+    previewAlarm(settings.defaultSound, 3000);
   };
 
   const dynamicStyles = {
@@ -223,7 +222,7 @@ export default function SettingsScreen() {
             <Text style={styles.logoBadgeIcon}>🔔</Text>
           </View>
           <Text style={[styles.appName, dynamicStyles.text]}>Bus Bell</Text>
-          <Text style={[styles.version, dynamicStyles.textSecondary]}>Версия 2.0.0</Text>
+          <Text style={[styles.version, dynamicStyles.textSecondary]}>Версия 2.1.0</Text>
           <Text style={[styles.description, dynamicStyles.textSecondary]}>
             Умные напоминания для общественного транспорта.{'\n'}
             Никогда не пропустите свою остановку!

@@ -15,22 +15,54 @@ import OnboardingScreen from './src/screens/OnboardingScreen';
 import { useAppStore, THEMES } from './src/store/appStore';
 import { useLocationTracking } from './src/hooks/useLocationTracking';
 import { setupAudio } from './src/services/soundService';
+import {
+  setupNotificationChannels,
+  setupNotificationCategories,
+  DISMISS_ACTION_ID,
+} from './src/services/alarmNotifications';
 
 const Tab = createBottomTabNavigator();
 
-// Настройка уведомлений
+// Настройка уведомлений, когда приложение открыто. В режиме будильника
+// звук уже играет сам будильник — не накладываем на него звук уведомления.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = notification.request.content.data as { alarmMode?: boolean } | undefined;
+    return {
+      shouldShowAlert: true,
+      shouldPlaySound: !data?.alarmMode,
+      shouldSetBadge: false,
+    };
+  },
 });
 
 function MainApp() {
   const { theme, activeAlarm, setActiveAlarm, hasSeenOnboarding, setHasSeenOnboarding } = useAppStore();
-  const { dismissAlarm } = useLocationTracking();
+  // Единственное место, где отслеживание включается/выключается автоматически
+  const { dismissAlarm } = useLocationTracking({ autoStart: true });
   const colors = THEMES[theme];
+
+  // Уведомление «Вы на месте!»: кнопка «Отключить» глушит будильник,
+  // нажатие на само уведомление открывает экран будильника
+  useEffect(() => {
+    const handleNotificationResponse = (response: Notifications.NotificationResponse) => {
+      if (response.actionIdentifier === DISMISS_ACTION_ID) {
+        dismissAlarm();
+        return;
+      }
+      const data = response.notification.request.content.data as
+        | { reminderId?: string; alarmMode?: boolean }
+        | undefined;
+      if (!data?.reminderId || !data.alarmMode) return;
+      const state = useAppStore.getState();
+      if (state.activeAlarm) return;
+      const reminder = state.reminders.find((r) => r.id === data.reminderId);
+      if (reminder) state.setActiveAlarm(reminder);
+    };
+
+    const subscription = Notifications.addNotificationResponseReceivedListener(handleNotificationResponse);
+    return () => subscription.remove();
+  }, [dismissAlarm]);
 
   const handleDismissAlarm = () => {
     dismissAlarm();
@@ -128,6 +160,8 @@ function MainApp() {
 export default function App() {
   useEffect(() => {
     const requestPermissions = async () => {
+      await setupNotificationChannels();
+      await setupNotificationCategories();
       await Notifications.requestPermissionsAsync();
       await setupAudio();
     };

@@ -1,5 +1,5 @@
 import { Audio } from 'expo-av';
-import * as Haptics from 'expo-haptics';
+import { Vibration } from 'react-native';
 import { SoundType } from '../store/appStore';
 
 // Sound file mappings
@@ -8,8 +8,14 @@ const SOUND_FILES: Record<string, any> = {
   alarm: require('../assets/sounds/alarm.wav'),
 };
 
+// Паттерны вибрации (мс): пауза, вибрация, пауза, вибрация...
+// Vibration из react-native на Android — это настоящий вибромотор с повтором,
+// а не короткие тактильные «щелчки» expo-haptics.
+const ALARM_VIBRATION = [0, 800, 400, 800, 400, 1200, 700];
+const VIBRATE_ONLY_PATTERN = [0, 600, 250, 600, 250, 600, 900];
+
 let currentSound: Audio.Sound | null = null;
-let vibrationInterval: NodeJS.Timeout | null = null;
+let alarmActive = false;
 
 /**
  * Настройка аудио-режима (вызвать при запуске приложения)
@@ -28,16 +34,18 @@ export async function setupAudio(): Promise<void> {
   }
 }
 
+/** Идёт ли сейчас будильник */
+export function isAlarmActive(): boolean {
+  return alarmActive;
+}
+
 /**
- * Воспроизвести звук напоминания
+ * Воспроизвести звук напоминания (по умолчанию — по кругу, пока не остановят)
  */
-export async function playReminderSound(soundType: SoundType): Promise<void> {
-  // Сначала остановим предыдущий звук
+export async function playReminderSound(soundType: SoundType, loop: boolean = true): Promise<void> {
   await stopSound();
 
-  if (soundType === 'vibrate') {
-    return;
-  }
+  if (soundType === 'vibrate') return;
 
   const soundFile = SOUND_FILES[soundType];
   if (!soundFile) {
@@ -48,7 +56,7 @@ export async function playReminderSound(soundType: SoundType): Promise<void> {
   try {
     const { sound } = await Audio.Sound.createAsync(soundFile, {
       shouldPlay: true,
-      isLooping: true,  // Зацикливаем пока пользователь не отключит
+      isLooping: loop,
       volume: 1.0,
     });
     currentSound = sound;
@@ -61,99 +69,73 @@ export async function playReminderSound(soundType: SoundType): Promise<void> {
  * Остановить текущий звук
  */
 export async function stopSound(): Promise<void> {
-  if (currentSound) {
+  const sound = currentSound;
+  currentSound = null;
+  if (sound) {
     try {
-      await currentSound.stopAsync();
-      await currentSound.unloadAsync();
+      await sound.stopAsync();
+      await sound.unloadAsync();
     } catch (error) {
       // Ignore errors on cleanup
     }
-    currentSound = null;
   }
 }
 
-/**
- * Запустить агрессивную вибрацию (серии быстрых тяжёлых импульсов)
- * Паттерн: 3 быстрых вибрации, пауза, повтор
- */
+/** Сильная повторяющаяся вибрация для будильника */
 export function startStrongVibration(): void {
-  stopVibration();
-
-  let burstCount = 0;
-
-  const doBurst = async () => {
-    // Серия из 3 быстрых тяжёлых вибраций
-    for (let i = 0; i < 3; i++) {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    // Пауза перед следующей нотификацией
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-  };
-
-  // Запускаем серию каждые 600мс (гораздо чаще чем было 800мс с одним лёгким импульсом)
-  vibrationInterval = setInterval(() => {
-    doBurst();
-    burstCount++;
-  }, 600);
-
-  // Первый импульс сразу
-  doBurst();
+  Vibration.cancel();
+  Vibration.vibrate(ALARM_VIBRATION, true);
 }
 
-/**
- * Запустить лёгкую вибрацию (для режима "только вибрация")
- * Тоже усиленная — серия импульсов каждые 400мс
- */
+/** Вибрация для режима «только вибрация» */
 export function startVibrateOnlyMode(): void {
-  stopVibration();
-
-  const doVibrate = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-  };
-
-  vibrationInterval = setInterval(doVibrate, 400);
-  doVibrate();
+  Vibration.cancel();
+  Vibration.vibrate(VIBRATE_ONLY_PATTERN, true);
 }
 
-/**
- * Остановить вибрацию
- */
+/** Однократная серия вибрации (без режима будильника) */
+export function vibrateOnce(): void {
+  Vibration.vibrate([0, 500, 200, 500, 200, 700]);
+}
+
+/** Остановить вибрацию */
 export function stopVibration(): void {
-  if (vibrationInterval) {
-    clearInterval(vibrationInterval);
-    vibrationInterval = null;
-  }
+  Vibration.cancel();
 }
 
 /**
- * Запустить полный будильник (звук + вибрация по типу)
+ * Запустить полный будильник (звук + вибрация).
+ * Повторный вызов, пока будильник уже звонит, ничего не делает —
+ * поэтому фоновая задача, обычное отслеживание и экран будильника
+ * не перебивают друг друга.
  */
 export async function startAlarm(soundType: SoundType, useVibration: boolean): Promise<void> {
-  // Звук
-  if (soundType !== 'vibrate') {
-    await playReminderSound(soundType);
+  if (alarmActive) return;
+  alarmActive = true;
+
+  if (soundType === 'vibrate') {
+    startVibrateOnlyMode();
+    return;
   }
 
-  // Вибрация
-  if (useVibration) {
-    if (soundType === 'vibrate') {
-      startVibrateOnlyMode();
-    } else {
-      startStrongVibration();
-    }
-  }
+  if (useVibration) startStrongVibration();
+  await playReminderSound(soundType, true);
 }
 
 /**
  * Остановить всё
  */
 export async function stopAlarm(): Promise<void> {
-  await stopSound();
+  alarmActive = false;
   stopVibration();
+  await stopSound();
+}
+
+/** Короткая проверка будильника из настроек */
+export async function previewAlarm(soundType: SoundType, durationMs: number = 3000): Promise<void> {
+  await stopAlarm();
+  await startAlarm(soundType, true);
+  setTimeout(() => {
+    stopAlarm();
+  }, durationMs);
 }

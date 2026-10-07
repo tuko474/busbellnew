@@ -6,7 +6,7 @@ import {
   TouchableOpacity,
   Animated,
 } from 'react-native';
-import { TRANSPORT_CONFIG, Reminder } from '../store/appStore';
+import { TRANSPORT_CONFIG, Reminder, useAppStore } from '../store/appStore';
 import { startAlarm, stopAlarm } from '../services/soundService';
 
 interface AlarmScreenProps {
@@ -21,8 +21,8 @@ export default function AlarmScreen({ reminder, onDismiss }: AlarmScreenProps) {
   const config = TRANSPORT_CONFIG[reminder.type];
 
   useEffect(() => {
-    // Запуск звука + вибрации
-    startAlarm(reminder.sound, true);
+    // Запуск звука + вибрации (если будильник уже звонит — ничего не произойдёт)
+    startAlarm(reminder.sound, useAppStore.getState().settings.vibration);
 
     // Пульсация
     Animated.loop(
