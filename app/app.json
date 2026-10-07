@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "Bus Bell",
+    "slug": "busbell",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "icon": "./src/assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./src/assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1a1a2e"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.busbell.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Bus Bell использует геолокацию для напоминания о приближении к остановке",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Bus Bell отслеживает местоположение в фоне для своевременного напоминания",
+        "NSLocationAlwaysUsageDescription": "Bus Bell отслеживает местоположение в фоне для напоминаний",
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./src/assets/adaptive-icon.png",
+        "backgroundColor": "#1a1a2e"
+      },
+      "package": "com.busbell.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "VIBRATE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Bus Bell использует геолокацию для напоминаний о приближении к остановке",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#FF6B35"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "d9a1019c-cfef-4d5d-b76f-90be9360d508"
+      }
+    }
+  }
+}
