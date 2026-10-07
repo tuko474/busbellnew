@@ -1,0 +1,90 @@
+# Сборка Android-версии Bus Bell в облаке GitHub. Без компьютера и без аккаунта Expo.
+# Запускается при каждом изменении папки app/ и вручную (Actions → Сборка Android → Run workflow).
+# Готовый .apk появляется в разделе Releases — его можно скачать прямо с телефона.
+
+name: Сборка Android
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'app/**'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    env:
+      CI: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # React Native 0.73 собирается на Java 17
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Установить зависимости
+        run: npm ci --no-audit --no-fund
+
+      - name: Создать Android-проект
+        run: npx expo prebuild --platform android --no-install --clean
+
+      - name: Номер версии и настройки сборки
+        run: |
+          G=android/app/build.gradle
+          P=android/gradle.properties
+          sed -i -E "s/versionCode [0-9]+/versionCode $((100 + ${{ github.run_number }}))/" "$G"
+          sed -i -E "s/versionName \"([0-9]+\.[0-9]+)\.[0-9]+\"/versionName \"\1.${{ github.run_number }}\"/" "$G"
+          grep -nE "versionCode|versionName" "$G"
+          # Больше памяти для сборки и только реальные телефоны (без эмуляторов x86) — быстрее
+          sed -i -E "s/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m/" "$P"
+          sed -i -E "s/^reactNativeArchitectures=.*/reactNativeArchitectures=armeabi-v7a,arm64-v8a/" "$P"
+          grep -nE "jvmargs|reactNativeArchitectures" "$P"
+
+      - name: Постоянный тестовый ключ подписи
+        # Один и тот же ключ у всех сборок — новая версия ставится поверх старой, напоминания сохраняются.
+        # Это открытый ключ только для тестов. Для Google Play нужен свой секретный ключ.
+        run: |
+          cp tools/android/busbell-test.keystore android/app/debug.keystore
+          grep -n -A6 "signingConfigs" android/app/build.gradle
+
+      - name: Собрать APK
+        working-directory: app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          ls -la app/build/outputs/apk/release/
+          VER=$(node -p "require('../app.json').expo.version.split('.').slice(0,2).join('.')").${{ github.run_number }}
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          cp app/build/outputs/apk/release/app-release.apk ../../busbell-$VER.apk
+          cp app/build/outputs/apk/release/app-release.apk ../../busbell.apk
+
+      - name: Сохранить APK в Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: busbell-apk
+          path: busbell-*.apk
+
+      - name: Опубликовать в Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Bus Bell ${{ env.VER }}
+          body: Сборка для Android. Скачай busbell.apk на телефон и установи.
+          files: |
+            busbell-*.apk
+            busbell.apk
+          make_latest: true
